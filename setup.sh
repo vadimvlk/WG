@@ -31,10 +31,47 @@ WG_NET="10.8.0"
 WG_DNS="${WG_DNS:-77.88.8.8, 77.88.8.1, 1.1.1.1, 8.8.8.8}"
 OUT_DIR=/root/wg-clients
 
+# Печатает конфиги и QR-коды всех клиентов из ${OUT_DIR}
+show_clients() {
+  local files=() f name endpoint_ip=""
+  shopt -s nullglob
+  files=("${OUT_DIR}"/*.conf)
+  shopt -u nullglob
+  if [[ ${#files[@]} -eq 0 ]]; then
+    echo "В ${OUT_DIR} нет клиентских конфигов."
+    return 0
+  fi
+  for f in "${files[@]}"; do
+    name=$(basename "$f" .conf)
+    echo "----- ${name}  (${f}) -----"
+    cat "$f"
+    echo
+    qrencode -t ansiutf8 <"$f"
+    echo
+    if [[ -z "$endpoint_ip" ]]; then
+      endpoint_ip=$(awk -F'[ =:]+' '/^Endpoint/{print $2; exit}' "$f" || true)
+    fi
+  done
+  echo "Скачать все конфиги на Windows (PowerShell):"
+  echo "  scp root@${endpoint_ip:-<IP_сервера>}:${OUT_DIR}/*.conf ."
+  [[ -n "$endpoint_ip" ]] && echo "После подключения открой https://ifconfig.me — должен показаться ${endpoint_ip}"
+  return 0
+}
+
 if [[ -e /etc/wireguard/${WG_IF}.conf ]]; then
   echo "/etc/wireguard/${WG_IF}.conf уже существует — сервер уже настроен."
+  if ! command -v qrencode >/dev/null 2>&1; then
+    echo "==> Ставлю qrencode для вывода QR-кодов"
+    apt-get -o DPkg::Lock::Timeout=300 install -y qrencode >/dev/null
+  fi
+  echo
+  echo "Состояние: $(systemctl is-active wg-quick@${WG_IF} 2>/dev/null || true)"
+  wg show ${WG_IF} 2>/dev/null || true
+  echo
+  show_clients
+  echo
   echo "Чтобы начать заново:  systemctl disable --now wg-quick@${WG_IF}; rm -f /etc/wireguard/${WG_IF}.conf; rm -rf ${OUT_DIR}"
-  exit 1
+  exit 0
 fi
 
 echo "==> Установка пакетов"
@@ -125,13 +162,4 @@ echo
 echo "================ ГОТОВО ================"
 wg show ${WG_IF}
 echo
-for name in "${CLIENTS[@]}"; do
-  echo "----- ${name}  (${OUT_DIR}/${name}.conf) -----"
-  cat "${OUT_DIR}/${name}.conf"
-  echo
-  qrencode -t ansiutf8 <"${OUT_DIR}/${name}.conf"
-  echo
-done
-echo "Скачать все конфиги на Windows (PowerShell):"
-echo "  scp root@${PUB_IP}:${OUT_DIR}/*.conf ."
-echo "После подключения открой https://ifconfig.me — должен показаться ${PUB_IP}"
+show_clients
